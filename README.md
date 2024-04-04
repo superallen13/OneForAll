@@ -134,7 +134,7 @@ arxiv:
 If you are implementing a dataset like Cora/pubmed/Arxiv, we recommend adding a directory of your data $customized_data$ under data/single_graph/$customized_data$ and implement gen_data.py under the directory, you can use data/Cora/gen_data.py as an example.
 
 
-After the data is constructed, you need to register you dataset name in (here)[https://github.com/LechengKong/OneForAll/blob/e73f799cabb07e5c6138ba7e8f71881c4e5dd87f/task_constructor.py#L25], and implement a **splitter** like (here)[https://github.com/LechengKong/OneForAll/blob/e73f799cabb07e5c6138ba7e8f71881c4e5dd87f/task_constructor.py#L35]. If you are doing zero-shot/few-shot tasks, you can constructor zero-shot/few-shot split here too.
+After the data is constructed, you need to register you dataset name in [here](https://github.com/LechengKong/OneForAll/blob/e73f799cabb07e5c6138ba7e8f71881c4e5dd87f/task_constructor.py#L25) , and implement a **splitter** like [here](https://github.com/LechengKong/OneForAll/blob/e73f799cabb07e5c6138ba7e8f71881c4e5dd87f/task_constructor.py#L35). If you are doing zero-shot/few-shot tasks, you can constructor zero-shot/few-shot split here too.
 
 Lastly, register a config entry in configs/data_config.yaml. For example, for end-to-end node classification
 
@@ -146,9 +146,9 @@ $data_name$:
   process_label_func: ... # usually processs_pth_label should work
   num_classes: $number of classes$
 ```
-process_label_func converts the target label to binary label, and transform class embedding if the task is zero-shot/few-shot, where the number of class node is not fixed. A list of avalailable process_label_func is (here)[https://github.com/LechengKong/OneForAll/blob/e73f799cabb07e5c6138ba7e8f71881c4e5dd87f/task_constructor.py#L280]. It takes in all classes embedding and the correct label. The output is a tuple : (label, class_node_embedding, binary/one-hot label).
+process_label_func converts the target label to binary label, and transform class embedding if the task is zero-shot/few-shot, where the number of class node is not fixed. A list of avalailable process_label_func is [here](https://github.com/LechengKong/OneForAll/blob/e73f799cabb07e5c6138ba7e8f71881c4e5dd87f/task_constructor.py#L280). It takes in all classes embedding and the correct label. The output is a tuple : (label, class_node_embedding, binary/one-hot label).
 
-If you want more flexibility, then adding customized datasets requires implementation of a customized subclass of (OFAPygDataset)[https://github.com/LechengKong/OneForAll/blob/e73f799cabb07e5c6138ba7e8f71881c4e5dd87f/data/ofa_data.py#L31].A template is here:
+If you want more flexibility, then adding customized datasets requires implementation of a customized subclass of [OFAPygDataset](https://github.com/LechengKong/OneForAll/blob/e73f799cabb07e5c6138ba7e8f71881c4e5dd87f/data/ofa_data.py#L31) .A template is here:
 
 ```python
 class CustomizedOFADataset(OFAPygDataset):
