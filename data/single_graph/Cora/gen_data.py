@@ -74,6 +74,8 @@ def get_data(dset):
             label_text + edge_label_text + logic_label_text,
             prompt_edge_text,
         ],
+        # noi prompt node feature for link and node tasks are stored in the same tensor, use the last list to index into the tesnor
+        # This is the same for class node embeddings.
         {"e2e_node": {"noi_node_text_feat": ["noi_node_text_feat", [0]],
                       "class_node_text_feat": ["class_node_text_feat", torch.arange(len(label_text))],
                       "prompt_edge_text_feat": ["prompt_edge_text_feat", [0]]},

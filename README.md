@@ -128,3 +128,86 @@ arxiv:
   process_label_func: process_pth_label  # name of process label function that transform original label to the binary labels
   num_classes: 40 
 ```
+
+## Add your own datasets
+
+If you are implementing a dataset like Cora/pubmed/Arxiv, we recommend adding a directory of your data $customized_data$ under data/single_graph/$customized_data$ and implement gen_data.py under the directory, you can use data/Cora/gen_data.py as an example.
+
+
+After the data is constructed, you need to register you dataset name in (here)[https://github.com/LechengKong/OneForAll/blob/e73f799cabb07e5c6138ba7e8f71881c4e5dd87f/task_constructor.py#L25], and implement a **splitter** like (here)[https://github.com/LechengKong/OneForAll/blob/e73f799cabb07e5c6138ba7e8f71881c4e5dd87f/task_constructor.py#L35]. If you are doing zero-shot/few-shot tasks, you can constructor zero-shot/few-shot split here too.
+
+Lastly, register a config entry in configs/data_config.yaml. For example, for end-to-end node classification
+
+```yaml
+$data_name$:
+  <<: *E2E-node
+  dataset_name: $data_name$
+  dataset_splitter: $splitter$
+  process_label_func: ... # usually processs_pth_label should work
+  num_classes: $number of classes$
+```
+process_label_func converts the target label to binary label, and transform class embedding if the task is zero-shot/few-shot, where the number of class node is not fixed. A list of avalailable process_label_func is (here)[https://github.com/LechengKong/OneForAll/blob/e73f799cabb07e5c6138ba7e8f71881c4e5dd87f/task_constructor.py#L280]. It takes in all classes embedding and the correct label. The output is a tuple : (label, class_node_embedding, binary/one-hot label).
+
+If you want more flexibility, then adding customized datasets requires implementation of a customized subclass of (OFAPygDataset)[https://github.com/LechengKong/OneForAll/blob/e73f799cabb07e5c6138ba7e8f71881c4e5dd87f/data/ofa_data.py#L31].A template is here:
+
+```python
+class CustomizedOFADataset(OFAPygDataset):
+    def gen_data(self):
+        """
+        Returns a tuple of the following format
+        (data, text, extra) 
+        data: a list of Pyg Data, if you only have a one large graph, you should still wrap it with the list.
+        text: a list of list of texts. e.g. [node_text, edge_text, label_text] this is will be converted to pooled vector representation.
+        extra: any extra data (e.g. split information) you want to save.
+        """
+
+    def add_text_emb(self, data_list, text_emb):
+        """
+        This function assigns generated embedding to member variables of the graph
+
+        data_list: data list returned in self.gen_data.
+        text_emb: list of torch text tensor corresponding to the returned text in self.gen_data. text_emb[0] = llm_encode(text[0])
+
+        
+        """
+        data_list[0].node_text_feat = ...     # corresponding node features
+        data_list[0].edge_text_feat = ...      # corresponding edge features
+        data_list[0].class_node_text_feat = ...      # class node features
+        data_list[0].prompt_edge_text_feat = ...     # edge features used in prompt node
+        data_list[0].noi_node_text_feat = ...       # noi node features, refer to the paper for the definition
+        return self.collate(data_list)
+
+    def get_idx_split(self):
+        """
+        Return the split information required to split the dataset, this optional, you can further split the dataset in task_constructor.py
+        
+        """
+
+    def get_task_map(self):
+        """
+        Because a dataset can have multiple different tasks that requires different prompt/class text embedding. This function returns a task map that maps a task name to the desired text embedding. Specifically, a task map is of the following format.
+
+        prompt_text_map = {task_name1: {"noi_node_text_feat": ["noi_node_text_feat", [$Index in data[0].noi_node_text_feat$]],
+                                    "class_node_text_feat": ["class_node_text_feat",
+                                                             [$Index in data[0].class_node_text_feat$]],
+                                    "prompt_edge_text_feat": ["prompt_edge_text_feat", [$Index in data[0].prompt_edge_text_feat$]]},
+                       task_name2: similar to task_name 1}
+        Please refer to examples in data/ for details.
+        """
+        return self.side_data[-1]
+
+    def get_edge_list(self, mode="e2e"):
+        """
+        Defines how to construct prompt graph
+        f2n: noi nodes to noi prompt node
+        n2f: noi prompt node to noi nodes
+        n2c: noi prompt node to class nodes
+        c2n: class nodes to noi prompt node
+        For different task/mode you might want to use different prompt graph construction, you can do so by returning a dictionary. For example
+        {"f2n":[1,0], "n2c":[2,0]} means you only want f2n and n2c edges, f2n edges have edge type 1, and its text embedding feature is data[0].prompt_edge_text_feat[0]
+        """
+        if mode == "e2e_link":
+            return {"f2n": [1, 0], "n2f": [3, 0], "n2c": [2, 0], "c2n": [4, 0]}
+        elif mode == "lr_link":
+            return {"f2n": [1, 0], "n2f": [3, 0]}
+```
