@@ -131,7 +131,7 @@ arxiv:
 
 ## Add your own datasets
 
-If you are implementing a dataset like Cora/pubmed/Arxiv, we recommend adding a directory of your data $customized_data$ under data/single_graph/$customized_data$ and implement gen_data.py under the directory, you can use data/Cora/gen_data.py as an example.
+If you are implementing a dataset like Cora/pubmed/Arxiv, we recommend adding a directory of your data \$customized_data \$ under data/single_graph/$customized_data$ and implement gen_data.py under the directory, you can use data/Cora/gen_data.py as an example.
 
 
 After the data is constructed, you need to register you dataset name in [here](https://github.com/LechengKong/OneForAll/blob/e73f799cabb07e5c6138ba7e8f71881c4e5dd87f/task_constructor.py#L25) , and implement a **splitter** like [here](https://github.com/LechengKong/OneForAll/blob/e73f799cabb07e5c6138ba7e8f71881c4e5dd87f/task_constructor.py#L35). If you are doing zero-shot/few-shot tasks, you can constructor zero-shot/few-shot split here too.
