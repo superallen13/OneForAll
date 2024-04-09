@@ -1,17 +1,19 @@
-from itertools import product
-import time
-import numpy as np
-from sklearn.model_selection import StratifiedKFold
-import torch
-import random
-import os
 import json
-import yaml
-
+import os
 import os.path as osp
+import random
+import time
 from datetime import datetime
-from gp.utils.io import load_yaml
+from itertools import product
 from types import SimpleNamespace
+
+import numpy as np
+import torch
+import yaml
+from deepspeed.utils.zero_to_fp32 import get_fp32_state_dict_from_zero_checkpoint
+from sklearn.model_selection import StratifiedKFold
+
+from gp.utils.io import load_yaml
 
 
 class SmartTimer:
@@ -341,3 +343,14 @@ def convert_yaml_params(params_path):
     load_params = load_yaml(params_path)
     load_params = SimpleNamespace(**load_params)
     return load_params
+
+
+def load_pretrained_state(model_dir, deepspeed=False):
+    if deepspeed:
+        def _remove_prefix(key: str, prefix: str) -> str:
+            return key[len(prefix):] if key.startswith(prefix) else key
+        state_dict = get_fp32_state_dict_from_zero_checkpoint(model_dir)
+        state_dict = {_remove_prefix(k, "_forward_module."): state_dict[k] for k in state_dict}
+    else:
+        state_dict = torch.load(model_dir)["state_dict"]
+    return state_dict

@@ -1,11 +1,10 @@
-import torch
 import numpy as np
 from lightning.pytorch import Trainer
-from lightning.pytorch.callbacks.progress import TQDMProgressBar
 from lightning.pytorch.callbacks import ModelCheckpoint
+from lightning.pytorch.callbacks.progress import TQDMProgressBar
 
-from gp.utils.utils import dict_res_summary
 from gp.lightning.metric import EvalKit
+from gp.utils.utils import dict_res_summary, load_pretrained_state
 
 
 def lightning_fit(
@@ -25,6 +24,7 @@ def lightning_fit(
     detect_anomaly=False,
     reload_freq=0,
     val_interval=1,
+    strategy=None,
 ):
     callbacks = []
     if prog_bar:
@@ -38,9 +38,11 @@ def lightning_fit(
                 filename=cktp_prefix + "{epoch}-{step}",
             )
         )
+
     trainer = Trainer(
         accelerator=accelerator,
-        devices=1 if torch.cuda.is_available() else 10,
+        strategy=strategy,
+        #devices=1 if torch.cuda.is_available() else 10,
         max_epochs=num_epochs,
         callbacks=callbacks,
         logger=logger,
@@ -54,11 +56,13 @@ def lightning_fit(
     )
     trainer.fit(model, datamodule=data_module)
     if load_best:
-        model.load_state_dict(
-            torch.load(trainer.checkpoint_callback.best_model_path)[
-                "state_dict"
-            ]
-        )
+        model_dir = trainer.checkpoint_callback.best_model_path
+        deep_speed = False
+        if strategy[:9] == "deepspeed":
+            deep_speed = True
+        state_dict = load_pretrained_state(model_dir, deep_speed)
+        model.load_state_dict(state_dict)
+
 
     val_col = []
     for i in range(test_rep):
@@ -101,19 +105,21 @@ def lightning_test(
     data_module,
     metrics: EvalKit,
     model_dir: str,
+    strategy="auto",
     profiler=None,
     prog_freq=20,
     test_rep=1,
     prog_bar=True,
     accelerator="auto",
     detect_anomaly=False,
+    deep_speed=True,
 ):
     callbacks = []
     if prog_bar:
         callbacks.append(TQDMProgressBar(refresh_rate=20))
     trainer = Trainer(
         accelerator=accelerator,
-        devices=1 if torch.cuda.is_available() else 10,
+        strategy=strategy,
         callbacks=callbacks,
         logger=logger,
         log_every_n_steps=prog_freq,
@@ -121,8 +127,8 @@ def lightning_test(
         enable_progress_bar=prog_bar,
         detect_anomaly=detect_anomaly,
     )
-    # trainer.fit(model, datamodule=data_module)
-    model.load_state_dict(torch.load(model_dir)["state_dict"])
+    state_dict = load_pretrained_state(model_dir, deep_speed)
+    model.load_state_dict(state_dict)
 
     val_col = []
     for i in range(test_rep):

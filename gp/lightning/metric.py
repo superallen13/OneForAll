@@ -1,10 +1,11 @@
-import torch
-import os.path as osp
 import copy
+import os.path as osp
+from itertools import chain
 from typing import Any, Callable, Optional, Literal, List, Union
+
+import torch
 from torchmetrics import MeanAbsoluteError, Accuracy, AUROC, MeanMetric, Metric
 from torchmetrics.text import BLEUScore
-from itertools import chain
 
 
 def classification_func(func, output, batch):

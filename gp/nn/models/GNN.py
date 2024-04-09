@@ -1,16 +1,14 @@
 """Base message-passing GNNs
 """
+from abc import ABCMeta, abstractmethod
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch_scatter import scatter
 
 from gp.nn.models.util_model import MLP
-
-from abc import ABCMeta, abstractmethod
-
 from gp.utils.utils import SmartTimer
-
-from torch_scatter import scatter
 
 
 class MultiLayerMessagePassing(nn.Module, metaclass=ABCMeta):

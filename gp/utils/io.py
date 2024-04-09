@@ -1,10 +1,11 @@
-import numpy as np
-from scipy.sparse import csr_matrix
-import os.path as osp
 import os
-import torch
+import os.path as osp
 import pickle as pkl
+
+import numpy as np
+import torch
 import yaml
+from scipy.sparse import csr_matrix
 from tqdm import tqdm
 
 from gp.utils.graph import construct_dgl_graph_from_edges

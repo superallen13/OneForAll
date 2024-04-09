@@ -1,12 +1,11 @@
 import os
-import numpy as np
+import pickle
 
+import networkx as nx
+import numpy as np
+import torch
 from rdkit import Chem
 from rdkit.Chem import rdmolops
-import networkx as nx
-import pickle
-import pandas as pd
-import torch
 
 file1 = open(os.path.join(os.path.dirname(__file__), "id2element.csv"), "r")
 Lines = file1.readlines()

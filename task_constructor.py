@@ -1,21 +1,19 @@
+import copy
+import json
+
+import numpy as np
 import torch
 import torch_geometric as pyg
-import json
-import numpy as np
-import copy
 
 import utils
 from data.KG.gen_data import KGOFADataset
 from data.chemmol.gen_data import MolOFADataset
 from data.single_graph.gen_data import SingleGraphOFADataset
-
-from ofa_datasets import (GraphListDataset, SubgraphDataset, MultiDataset, GraphListHierDataset, SubgraphHierDataset,
+from fs_datamanager import SimpleFSManager
+from gp.lightning.data_template import DataWithMeta
+from ofa_datasets import (MultiDataset, GraphListHierDataset, SubgraphHierDataset,
                           SubgraphLinkHierDataset, SubgraphKGHierDataset, SubgraphNopromptDataset,
                           GraphListNopromptDataset, SubgraphNopromptLinkDataset, FewShotDataset)
-from fs_datamanager import FewShotDataManager, SimpleFSManager
-
-from gp.utils.utils import k_fold_ind, k_fold2_split
-from gp.lightning.data_template import DataWithMeta
 
 # TODO: Instead of using global() to access these functions, come up with something more elegant
 from gp.lightning.metric import (binary_auc_func, flat_binary_func, classification_func, EvalKit, )
@@ -33,14 +31,7 @@ name2dataset = {"arxiv": SingleGraphOFADataset, "Cora": SingleGraphOFADataset, "
 
 
 def ArxivSplitter(dataset):
-    text_g = dataset.data
-    kfold = k_fold_ind(text_g.y, 10)
-    text_split = k_fold2_split(kfold, len(text_g.y))[0]
-    split = {}
-    split["train"] = text_split[0]
-    split["valid"] = text_split[1]
-    split["test"] = text_split[2]
-    return split
+    return dataset.data.split
 
 
 def ArxivFSSplitter(dataset):
@@ -147,9 +138,21 @@ def WikiSplitter(dataset):
              "test": torch.where(text_g.test_mask)[0].numpy(), }
     return split
 
-
 def MolSplitter(dataset):
     return dataset.get_idx_split()
+
+def MolFSTrainSplitter(dataset):
+    fs_split = {}
+    # use all chemblepre classes as training classes for few-shot/zero-shot tasks
+    all_classes = dataset.y.view(len(dataset), -1)
+    positive_samples = [(cls==1).nonzero(as_tuple=True)[0] for cls in all_classes.T]
+    negative_samples = [(cls==0).nonzero(as_tuple=True)[0] for cls in all_classes.T]
+    all_idx2cls = [np.array([i for i in range(2 * len(positive_samples))]), positive_samples + negative_samples]
+    fs_split['train'] = all_idx2cls
+    fs_split['valid'] = all_idx2cls
+    fs_split['test'] = all_idx2cls
+
+    return fs_split
 
 
 #############################################
@@ -204,7 +207,7 @@ def ConstructNodeNopromptCls(dataset, split, split_name, to_bin_cls_func, global
     text_g = dataset.data
 
     return SubgraphNopromptDataset(text_g, text_g.label_text_feat, split[split_name], to_undirected=True,
-                                   process_label_func=to_bin_cls_func, )
+                                   process_label_func=to_bin_cls_func, **kwargs, )
 
 
 def ConstructLinkCls(dataset, split, split_name, prompt_feats, to_bin_cls_func, global_data, task_level, **kwargs):
@@ -215,8 +218,8 @@ def ConstructLinkCls(dataset, split, split_name, prompt_feats, to_bin_cls_func, 
     return SubgraphLinkHierDataset(train_graph, prompt_feats["class_node_text_feat"],
                                    prompt_feats["prompt_edge_text_feat"], prompt_feats["noi_node_text_feat"],
                                    edges.T[split[split_name]].numpy(), to_undirected=True, hop=3,
-                                   process_label_func=to_bin_cls_func,
-                                   prompt_edge_list=dataset.get_edge_list(task_level), **kwargs, )
+                                   process_label_func=to_bin_cls_func, prompt_edge_list=dataset.get_edge_list(task_level),
+                                   **kwargs, )
 
 
 def ConstructLinkNopromptCls(dataset, split, split_name, to_bin_cls_func, **kwargs):
@@ -226,17 +229,23 @@ def ConstructLinkNopromptCls(dataset, split, split_name, to_bin_cls_func, **kwar
 
     return SubgraphNopromptLinkDataset(train_graph, train_graph.edge_label_feat, edges.T[split[split_name]].numpy(),
                                        prompt_feat=train_graph.prompt_text_edge_feat, to_undirected=True, hop=3,
-                                       remove_edge=kwargs["remove_edge"], process_label_func=to_bin_cls_func,
-                                       walk_length=kwargs["walk_length"], )
+                                       process_label_func=to_bin_cls_func, **kwargs, )
 
 
 def ConstructKG(dataset, split, split_name, prompt_feats, to_bin_cls_func, task_level, global_data, **kwargs):
     edge_data = [global_data[0][split[split_name]].tolist(), global_data[1][split[split_name]].tolist()]
+    # Fow lr_link tasks: use train class links to construct adj matrix for training
+    if task_level == 'lr_link' and kwargs['fs_flag'] == 'train':
+        fs_edges = global_data[0][split['train']].tolist()
+    elif task_level == 'lr_link' and kwargs['fs_flag'] in ['valid', 'test']:
+        fs_edges = global_data[0].tolist()
+    else:
+        fs_edges = None
 
     return SubgraphKGHierDataset(global_data[-1], prompt_feats["class_node_text_feat"],
                                  prompt_feats["prompt_edge_text_feat"], prompt_feats["noi_node_text_feat"], edge_data,
                                  to_undirected=True, hop=2, process_label_func=to_bin_cls_func,
-                                 prompt_edge_list=dataset.get_edge_list(task_level), **kwargs, )
+                                 prompt_edge_list=dataset.get_edge_list(task_level), fs_edges=fs_edges, **kwargs, )
 
 
 def ConstructMolCls(dataset, split, split_name, prompt_feats, to_bin_cls_func, task_level, global_data, **kwargs):
@@ -254,7 +263,7 @@ def ConstructMolNopromptCls(dataset, split, split_name, to_bin_cls_func, **kwarg
 
 def ConstructFSTask(dataset, split, split_name, prompt_feats, to_bin_cls_func, global_data, task_level, **kwargs):
     original_idx = np.concatenate(split[split_name][1])
-    pseudo_split = {"pseudo": original_idx}
+    pseudo_split = {"pseudo": original_idx, "train": np.concatenate(split['train'][1])}
     query_idx = []
     count = 0
     for d in split[split_name][1]:
@@ -262,18 +271,20 @@ def ConstructFSTask(dataset, split, split_name, prompt_feats, to_bin_cls_func, g
         count += len(d)
 
     query_graph_dataset = globals()[kwargs["base_construct"]](dataset=dataset, split=pseudo_split, split_name="pseudo",
-                                                              prompt_feats=prompt_feats, to_bin_cls_func=None,
-                                                              global_data=global_data, task_level=task_level, **kwargs)
+                                                              prompt_feats=prompt_feats, to_bin_cls_func=to_bin_cls_func,
+                                                              global_data=global_data, task_level=task_level, fs_flag=split_name, **kwargs)
 
     support_graph_dataset = globals()[kwargs["base_construct"]](dataset=dataset, split=pseudo_split,
                                                                 split_name="pseudo", prompt_feats=prompt_feats,
-                                                                to_bin_cls_func=None, global_data=global_data,
-                                                                task_level=task_level, **kwargs)
+                                                                to_bin_cls_func=to_bin_cls_func, global_data=global_data,
+                                                                task_level=task_level, fs_flag=split_name, **kwargs)
 
     fs_loader = SimpleFSManager(split[split_name][0], query_idx, kwargs["k_shot"], 1, kwargs["n_way"],
-                                kwargs.get("min_k_shot"), kwargs.get("min_n_way"))
+                                kwargs.get("min_k_shot"), kwargs.get("min_n_way"), task_level,)
+
     return FewShotDataset(fs_loader, query_graph_dataset, support_graph_dataset,
-                          prompt_feats["prompt_edge_text_feat"][1:])
+                          prompt_feats["prompt_edge_text_feat"][-2:], task_level)
+
 
 
 ####################################
@@ -297,7 +308,7 @@ def process_multi_label(embs, label):
     valid_idx = label == label
     # valid_idx = torch.zeros_like(classes, dtype=torch.bool)
     return (
-        torch.tensor([[0]]), embs[valid_idx.view(-1)].detach().clone(), label[:, valid_idx.view(-1)].detach().clone(),)
+        torch.tensor([[0]]), embs[valid_idx.view(-1)].copy(), label[:, valid_idx.view(-1)].detach().clone(),)
 
 
 def process_positive_negative_multi_label(embs, label):
@@ -305,8 +316,7 @@ def process_positive_negative_multi_label(embs, label):
     label = label[:, valid_idx.view(-1)].detach().clone()
     valid_idx = valid_idx.repeat(1, 2)
     label = torch.cat([label, 1 - label], dim=-1)
-
-    return (torch.tensor([[0]]), embs[valid_idx.view(-1)].detach().clone(), label,)
+    return (torch.tensor([[0]]), embs[valid_idx.view(-1)].copy(), label,)
 
 
 def eval_process_label(embs, classes):
@@ -321,6 +331,11 @@ def process_int_label(embs, label):
     binary_rep = torch.zeros((1, len(embs)))
     binary_rep[0, label] = 1
     return torch.tensor([label]).view(1, -1), embs, binary_rep
+
+def process_fewshot_label(embs, label):
+    trimed_class = torch.zeros((1, len(embs)))
+    trimed_class[0, label] = 1
+    return label, embs, trimed_class
 
 
 def hiv_trim_class(embs, label):
@@ -362,8 +377,9 @@ none_process_label = None
 
 
 class UnifiedTaskConstructor:
-    def __init__(self, tasks: list[str], encoder: utils.SentenceEncoder, task_config_lookup: dict,
-                 data_config_lookup: dict, root="cache_data", batch_size=256, sample_size=-1):
+    def __init__(self, tasks: list[str], load_texts: bool, encoder: utils.SentenceEncoder,
+                 task_config_lookup: dict, data_config_lookup: dict, root="cache_data",
+                 batch_size=256, sample_size=-1, eval_batch_size=None):
         """
         Construct tasks from a dictionary of dataset configurations. A task must contain a train dataset, but can
         have arbitrary number of valid/test dataset. A valid/test dataset is wrapped by a
@@ -372,20 +388,24 @@ class UnifiedTaskConstructor:
         self.construct_exp construct all datasets.
         Args:
             tasks: a list of task names, they should be keys in the task_config_lookup
+            load_texts: If true, only load raw texts instead of generated embedding.
             encoder: utils.SentenceEncoder
             task_config_lookup: a dictionary for tasks, more details in Readme
             data_config_lookup: a dictionary for datasets construction in Readme
             root: dataset loading directory
             batch_size: int
             sample_size: int, -1 means full dataste
+            eval_batch_size: int, None means equal to batch_size.
         """
         self.root = root
+        self.load_texts = load_texts
         self.tasks = tasks
         self.encoder = encoder
         self.task_config_lookup = task_config_lookup
         self.data_config_lookup = data_config_lookup
         self.batch_size = batch_size
         self.sample_size = sample_size
+        self.eval_batch_size = (batch_size if eval_batch_size is None else eval_batch_size)
         with open("data/low_resource_split.json", "r") as f:
             self.lr_class_split = json.load(f)
 
@@ -439,7 +459,8 @@ class UnifiedTaskConstructor:
     def get_ofa_data(self, dataset_config):
         dataset_name = dataset_config["dataset_name"]
         if dataset_name not in self.dataset:
-            self.dataset[dataset_name] = name2dataset[dataset_name](dataset_name, root=self.root, encoder=self.encoder)
+            self.dataset[dataset_name] = name2dataset[dataset_name](dataset_name, load_texts=self.load_texts,
+                                                                    root=self.root, encoder=self.encoder)
         return self.dataset[dataset_name]
 
     def get_data_split(self, dataset_config):
@@ -486,7 +507,7 @@ class UnifiedTaskConstructor:
         else:
             eval_data = make_data(stage_config["dataset"], data, stage_config["split_name"],
                                   dataset_config["eval_metric"], globals()[dataset_config["eval_func"]],
-                                  dataset_config["num_classes"], batch_size=self.batch_size,
+                                  dataset_config["num_classes"], batch_size=self.eval_batch_size,
                                   sample_size=self.sample_size, eval_mode=dataset_config["eval_mode"])
             self.datasets[stage_config["stage"]].append(eval_data)
         self.stage_names[stage_config["stage"]].append(stage_name)
@@ -500,6 +521,23 @@ class UnifiedTaskConstructor:
     def make_full_dm_list(self, multiple, min_ratio, train_data=None):
         text_dataset = {
             "train": DataWithMeta(self.make_train_data(multiple, min_ratio) if not train_data else train_data,
-                                  self.batch_size, sample_size=self.sample_size, ), "val": self.datasets["valid"],
+                                  self.batch_size, sample_size=self.sample_size, ),
+            "val": self.datasets["valid"],
             "test": self.datasets["test"], }
         return text_dataset
+
+    def make_eval_dm_list(self):
+        text_dataset = {
+            "val": self.datasets["valid"],
+            "test": self.datasets["test"], }
+        return text_dataset
+
+    def inject_tokenizer(self, tokenizer, max_length):
+        for key, items in self.datasets.items():
+            if key == "train":
+                for dataset in items:
+                    dataset.add_llm_tokenizer(tokenizer, max_length)
+            else:
+                for dataset in items:
+                    dataset.data.add_llm_tokenizer(tokenizer, max_length)
+

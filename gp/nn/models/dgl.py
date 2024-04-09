@@ -1,8 +1,8 @@
 import torch
-from gp.nn.models.GNN import MultiLayerMessagePassing
-
-from gp.nn.models.util_model import MLP
 from dgl.nn.pytorch.conv import GINConv, RelGraphConv
+
+from gp.nn.models.GNN import MultiLayerMessagePassing
+from gp.nn.models.util_model import MLP
 
 
 class DGLGIN(MultiLayerMessagePassing):

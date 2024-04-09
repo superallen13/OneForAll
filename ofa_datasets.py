@@ -1,15 +1,64 @@
+from abc import ABC, abstractmethod
 from typing import Union, Callable
 
-from gp.utils.datasets import DatasetWithCollate
-import torch_geometric as pyg
-import torch
 import numpy as np
-from scipy.sparse import csr_array, coo_array
+import torch
+import torch_geometric as pyg
+from scipy.sparse import csr_array
+
+from gp.utils.datasets import DatasetWithCollate
 from gp.utils.graph import sample_fixed_hop_size_neighbor
-from abc import ABC, abstractmethod
 from utils import scipy_rwpe, set_mask
 
-from gp.utils.utils import SmartTimer
+
+class OFA_collater:
+    """
+    Collater is used for merge a batch of OFA data. It supports two modes:
+    1. If llm_tokenzier is None, collater assumes edge and node features are fixed size numpy array and convert it to torch tensor.
+    2. If llm_tokenzier is not None, collater assumes edge and node features are raw texts and use tokenzier to convert it to text ids.
+    All other attributes will be merged by default PyG collater.
+    """
+    def __init__(self, llm_tokenizer, llm_max_length):
+        self.llm_tokenizer = llm_tokenizer
+        self.llm_max_length = llm_max_length
+        self.pyg_collater = pyg.loader.dataloader.Collater(None, None)
+
+    def return_unique_text_mapping(self, texts):
+        """
+        return unique text list with a mapping back to original list.
+        """
+        sorted_position = np.argsort(texts)
+        sorted_texts = texts[sorted_position]
+        keys = np.unique(sorted_texts)
+        lower = np.searchsorted(sorted_texts, keys)
+        higher = np.append(lower[1:], len(sorted_texts))
+        unique_texts = []
+        mappings = np.zeros(len(texts)).astype(int)
+        for i, (key, lower_i, higher_i) in enumerate(zip(keys, lower, higher)):
+            unique_texts.append(key)
+            mappings[sorted_position[lower_i: higher_i]] = i
+
+        return np.array(unique_texts), mappings
+
+    def tokenize(self, text_inputs):
+        text_tokens = self.llm_tokenizer(text_inputs,
+                                         return_tensors="pt",
+                                         padding="longest",
+                                         truncation=True,
+                                         max_length=self.llm_max_length)
+        return text_tokens
+    def __call__(self, batch):
+        g = self.pyg_collater(batch)
+        if self.llm_tokenizer is None:
+            g.x = torch.from_numpy(np.concatenate(g.x, axis=0))
+            g.edge_attr = torch.from_numpy(np.concatenate(g.edge_attr, axis=0))
+        else:
+            text_inputs = np.concatenate(g.x + g.edge_attr, axis=0)
+            unique_text_inputs, text_mapping = self.return_unique_text_mapping(text_inputs)
+            text_tokens = self.tokenize(unique_text_inputs.tolist())
+            g.text_tokens = text_tokens
+            g.text_mapping = torch.from_numpy(text_mapping)
+        return g
 
 
 class GraphTextDataset(DatasetWithCollate, ABC):
@@ -27,9 +76,13 @@ class GraphTextDataset(DatasetWithCollate, ABC):
                                     different tasks.
             **kwargs: additional arguments.
         """
+        self.prompt_edge_emb = None
         self.g = graph
         self.process_label_func = process_label_func
         self.kwargs = kwargs
+        self.llm_tokenizer = None
+        self.llm_max_length = None
+        #self.edge_mode = 1
         if "prompt_edge_list" in kwargs:
             self.prompt_edge_list = kwargs["prompt_edge_list"]
         else:
@@ -100,17 +153,26 @@ class GraphTextDataset(DatasetWithCollate, ABC):
             prompt_e_index = getattr(self, "make_" + prompt_edge_str + "_edge")(target_node_id, class_emb, n_feat_node)
             prompt_edge_types = torch.zeros(len(prompt_e_index[0]), dtype=torch.long) + \
                                 self.prompt_edge_list[prompt_edge_str][0]
+
             if self.prompt_edge_list[prompt_edge_str][1] is None:
                 edge_emb = self.prompt_edge_emb
             else:
                 edge_emb = self.prompt_edge_emb[self.prompt_edge_list[prompt_edge_str][1]]
-            prompt_edge_feat = edge_emb.repeat([len(prompt_e_index[0]), 1])
+            # If the number of edge emb is 1, repeat it for each prompt edge.
+            # If not, assume the number of edge emb equal to the number of prompt edge.
+            # Currently, only n2f and f2n in KG dataset will have number of edge emb larger than 1.
+            num_edge_emb = len(self.prompt_edge_list[prompt_edge_str][1])
+            assert num_edge_emb == 1 or num_edge_emb == len(prompt_e_index[0])
+            if num_edge_emb > 1:
+                prompt_edge_feat = edge_emb
+            else:
+                prompt_edge_feat = edge_emb.repeat(len(prompt_e_index[0]), axis=0)
             prompt_edge_lst.append(prompt_e_index)
             prompt_edge_type_lst.append(prompt_edge_types)
             prompt_edge_feat_lst.append(prompt_edge_feat)
         edge_index = torch.cat([edge_index] + prompt_edge_lst, dim=-1, )
         e_type = torch.cat([e_type] + prompt_edge_type_lst)
-        edge_feat = torch.cat([edge_feat] + prompt_edge_feat_lst)
+        edge_feat = np.concatenate([edge_feat] + prompt_edge_feat_lst, axis=0)
         return feat, edge_index, label, edge_feat, e_type
 
     def to_pyg(self, feature_graph, prompted_graph):
@@ -126,11 +188,17 @@ class GraphTextDataset(DatasetWithCollate, ABC):
         set_mask(new_subg, "feat_node_mask", list(range(len(feature_graph[0]))))
         new_subg.sample_num_nodes = new_subg.num_nodes
         new_subg.num_classes = num_class
-        # print("text", new_subg)
         return new_subg
 
+    def add_llm_tokenizer(self, tokenizer, llm_max_length):
+        """
+        add llm tokenizer for collater.
+        """
+        self.llm_tokenizer = tokenizer
+        self.llm_max_length = llm_max_length
+
     def get_collate_fn(self):
-        return pyg.loader.dataloader.Collater(None, None)
+        return OFA_collater(self.llm_tokenizer, self.llm_max_length)
 
     def process_label(self, label):
         """
@@ -149,9 +217,10 @@ class SubgraphDataset(GraphTextDataset):
     Build feature subgraphs from a large graph, used mostly in node/link tasks
     """
 
-    def __init__(self, pyg_graph, class_emb, prompt_edge_emb, data_idx, hop=2, class_mapping=None, to_undirected=False,
+    def __init__(self, pyg_graph, class_emb, prompt_edge_emb, data_idx, hop=2, max_nodes_per_hop=100, class_mapping=None, to_undirected=False,
                  process_label_func=None, adj=None, **kwargs, ):
         super().__init__(pyg_graph, process_label_func, **kwargs)
+        self.max_nodes_per_hop = max_nodes_per_hop
         self.to_undirected = to_undirected
         edge_index = self.g.edge_index
         if self.to_undirected:
@@ -172,7 +241,8 @@ class SubgraphDataset(GraphTextDataset):
 
     def get_neighbors(self, index):
         node_id = self.data_idx[index]
-        neighbors = sample_fixed_hop_size_neighbor(self.adj, [node_id], self.hop, max_nodes_per_hope=100)
+        neighbors = sample_fixed_hop_size_neighbor(self.adj, [node_id], self.hop,
+                                                   max_nodes_per_hop=self.max_nodes_per_hop)
         neighbors = np.r_[node_id, neighbors]
         edges = self.adj[neighbors, :][:, neighbors].tocoo()
         if self.class_mapping is not None:
@@ -188,13 +258,13 @@ class SubgraphDataset(GraphTextDataset):
         (edge_index, neighbors, emb, label, binary_rep, target_node_id,) = self.get_neighbors(index)
         feat = self.g.node_text_feat[neighbors]
         e_type = torch.zeros(len(edge_index[0]), dtype=torch.long)
-        edge_feat = self.g.edge_text_feat.repeat([len(edge_index[0]), 1])
+        edge_feat = self.g.edge_text_feat.repeat(len(edge_index[0]), axis=0)
         return (feat, edge_feat, edge_index, e_type, target_node_id, emb, label, binary_rep,)
 
     def make_prompt_node(self, feat, class_emb):
         # Only feature nodes and class nodes, no NOI node.
         if not self.no_class_node:
-            feat = torch.cat([feat, class_emb], dim=0)
+            feat = np.concatenate([feat, class_emb], axis=0)
         return feat
 
     def make_f2n_edge(self, target_node_id, class_emb, n_feat_node):
@@ -217,10 +287,10 @@ class SubgraphNopromptDataset(SubgraphDataset):
 
 
 class SubgraphHierDataset(SubgraphDataset):
-    def __init__(self, pyg_graph, class_emb, prompt_edge_emb, noi_node_emb, data_idx, hop=2, class_mapping=None,
-                 to_undirected=False, process_label_func=None, adj=None, **kwargs, ):
-        super().__init__(pyg_graph, class_emb, prompt_edge_emb, data_idx, hop, class_mapping, to_undirected,
-                         process_label_func, adj, **kwargs, )
+    def __init__(self, pyg_graph, class_emb, prompt_edge_emb, noi_node_emb, data_idx, hop=2, max_nodes_per_hop=100,
+                 class_mapping=None, to_undirected=False, process_label_func=None, adj=None, **kwargs, ):
+        super().__init__(pyg_graph, class_emb, prompt_edge_emb, data_idx, hop, max_nodes_per_hop, class_mapping,
+                         to_undirected, process_label_func, adj, **kwargs, )
         self.noi_node_emb = noi_node_emb
 
     def __len__(self):
@@ -230,9 +300,9 @@ class SubgraphHierDataset(SubgraphDataset):
         # Add class node in zero-shot scenario. In few-shot scenario, only NOI node. Class nodes will be added by
         # future dataset wrapper
         if self.no_class_node:
-            feat = torch.cat([feat, self.noi_node_emb], dim=0)
+            feat = np.concatenate([feat, self.noi_node_emb], axis=0)
         else:
-            feat = torch.cat([feat, self.noi_node_emb, class_emb], dim=0)
+            feat = np.concatenate([feat, self.noi_node_emb, class_emb], axis=0)
 
         return feat
 
@@ -258,9 +328,9 @@ class SubgraphHierDataset(SubgraphDataset):
 
 class SubgraphLinkHierDataset(SubgraphHierDataset):
     def __init__(self, pyg_graph, class_emb, prompt_edge_emb, noi_node_emb, edges, remove_edge=False, hop=2,
-                 class_mapping=None, to_undirected=False, process_label_func=None, adj=None, **kwargs, ):
-        super().__init__(pyg_graph, class_emb, prompt_edge_emb, noi_node_emb, None, hop, class_mapping, to_undirected,
-                         process_label_func, adj, **kwargs, )
+                 max_nodes_per_hop=100, class_mapping=None, to_undirected=False, process_label_func=None, adj=None, **kwargs, ):
+        super().__init__(pyg_graph, class_emb, prompt_edge_emb, noi_node_emb, None, hop, max_nodes_per_hop, class_mapping,
+                         to_undirected, process_label_func, adj, **kwargs, )
         self.edges = edges
         self.pos_index = len(self.edges)
         self.remove_edge = remove_edge
@@ -290,7 +360,8 @@ class SubgraphLinkHierDataset(SubgraphHierDataset):
         else:
             label = 0
         node_ids = list(edge_id)
-        neighbors = sample_fixed_hop_size_neighbor(self.adj, node_ids, self.hop, max_nodes_per_hope=100)
+        neighbors = sample_fixed_hop_size_neighbor(self.adj, node_ids, self.hop,
+                                                   max_nodes_per_hop=self.max_nodes_per_hop)
         neighbors = np.r_[node_ids, neighbors]
         edges = self.adj[neighbors, :][:, neighbors].tocoo()
         row = edges.row
@@ -314,10 +385,15 @@ class SubgraphNopromptLinkDataset(SubgraphLinkHierDataset):
 
 class SubgraphKGHierDataset(SubgraphHierDataset):
     def __init__(self, pyg_graph, class_emb, prompt_edge_emb, noi_node_emb, edges, remove_edge=False, hop=2,
-                 class_mapping=None, to_undirected=False, process_label_func=None, adj=None, **kwargs, ):
-        super().__init__(pyg_graph, class_emb, prompt_edge_emb, noi_node_emb, None, hop, class_mapping, to_undirected,
+                 max_nodes_per_hop=100, class_mapping=None, to_undirected=False, process_label_func=None, adj=None, **kwargs, ):
+        super().__init__(pyg_graph, class_emb, prompt_edge_emb, noi_node_emb, None, hop, max_nodes_per_hop, class_mapping, to_undirected,
                          process_label_func, adj, **kwargs, )
         self.edges = edges
+        # few-shot edge mask, only use edges from training classes
+        fs_edges = kwargs['fs_edges']
+        if adj is None and fs_edges is not None:
+            self.adj = csr_array((torch.ones(len(fs_edges[0])), (fs_edges[0], fs_edges[1]),),
+                                 shape=(self.g.num_nodes, self.g.num_nodes), )
         self.remove_edge = remove_edge
 
     def __len__(self):
@@ -337,7 +413,8 @@ class SubgraphKGHierDataset(SubgraphHierDataset):
         node_ids = list(self.edges[0][index])
         label = self.edges[1][index]
 
-        neighbors = sample_fixed_hop_size_neighbor(self.adj, node_ids, self.hop, max_nodes_per_hope=100)
+        neighbors = sample_fixed_hop_size_neighbor(self.adj, node_ids, self.hop,
+                                                   max_nodes_per_hop=self.max_nodes_per_hop)
         neighbors = np.r_[node_ids, neighbors]
         node_mask = self.index_to_mask(neighbors, size=self.g.num_nodes)
 
@@ -393,7 +470,7 @@ class GraphListDataset(GraphTextDataset):
 
     def make_prompt_node(self, feat, class_emb):
         if not self.no_class_node:
-            feat = torch.cat([feat, class_emb], dim=0)
+            feat = np.concatenate([feat, class_emb], axis=0)
         return feat
 
     def make_f2n_edge(self, target_node_id, class_emb, n_feat_node):
@@ -415,8 +492,6 @@ class GraphListNopromptDataset(GraphListDataset):
         feat = torch.cat([feat, g_class_emb], dim=0)
         edge_type = torch.zeros(len(edge_feat), dtype=torch.long)
         prompted_graph = pyg.data.Data(feat, edge_index, y=label, edge_attr=edge_feat, edge_type=edge_type, )
-        # print(prompted_graph)
-        # print(edge_index)
         return prompted_graph
 
 
@@ -428,9 +503,9 @@ class GraphListHierDataset(GraphListDataset):
 
     def make_prompt_node(self, feat, class_emb):
         if self.no_class_node:
-            feat = torch.cat([feat, self.noi_node_emb], dim=0)
+            feat = np.concatenate([feat, self.noi_node_emb], axis=0)
         else:
-            feat = torch.cat([feat, self.noi_node_emb, class_emb], dim=0)
+            feat = np.concatenate([feat, self.noi_node_emb, class_emb], axis=0)
         return feat
 
     def make_f2n_edge(self, target_node_id, class_emb, n_feat_node):
@@ -455,7 +530,7 @@ class GraphListHierDataset(GraphListDataset):
 
 
 class FewShotDataset(DatasetWithCollate):
-    def __init__(self, fsmanager, query_graph_dataset, support_graph_dataset, fs_edge_feats, sample_size=1000):
+    def __init__(self, fsmanager, query_graph_dataset, support_graph_dataset, fs_edge_feats, task_level, sample_size=2000):
         """
         FewShotDataset: use data indices generated from fsmanager to index into
         query_graph_dataset/support_graph_dataset (GraphTextDataset) to get query and support prompted graph only
@@ -473,7 +548,10 @@ class FewShotDataset(DatasetWithCollate):
         self.query_graph_dataset = query_graph_dataset
         self.support_graph_dataset = support_graph_dataset
         self.fs_edge_feats = fs_edge_feats
+        self.task_level = task_level
         self.sample_size = sample_size
+        self.llm_tokenizer = None
+        self.llm_max_length = None
 
     def get_noi_graph(self, dataset: GraphTextDataset, index, class_emb):
         feature_graph = list(dataset.make_feature_graph(index))
@@ -496,9 +574,8 @@ class FewShotDataset(DatasetWithCollate):
         # spt_subgraphs will store all n_way x k_shot subgraph info
         # qry subgraphs will store all n_way x q_query subgraph info
         qry_graphs, spt_graphs, final_subgraphs = [], [], []
-        for cls_idx in range(len(node_ids)):
-            for shot_idx in range(len(node_ids[0])):
-                # sm.record()
+        for cls_idx in range(n_way):
+            for shot_idx in range(k_shot + q_query):
                 if shot_idx < q_query:
                     qry_graphs.append(
                         self.get_noi_graph(self.query_graph_dataset, node_ids[cls_idx, shot_idx], class_emb))
@@ -506,8 +583,11 @@ class FewShotDataset(DatasetWithCollate):
                     spt_graphs.append(
                         self.get_noi_graph(self.support_graph_dataset, node_ids[cls_idx, shot_idx], class_emb))
 
-        # Randomly select one query node
-        qry_ind = torch.randint(n_way, (1, 1))
+        # Randomly select one query node for node/link tasks
+        if self.query_graph_dataset.task_level == 'lr_graph':
+            qry_ind = torch.tensor([[0]])
+        else:
+            qry_ind = torch.randint(n_way, (1, 1))
         qry_graph = qry_graphs[qry_ind.view(-1)]
         graphs = [qry_graph] + spt_graphs
         feat_lst, edge_index, label, edge_feat, e_type = zip(*graphs)
@@ -516,12 +596,13 @@ class FewShotDataset(DatasetWithCollate):
         noi_node_idx = torch.cumsum(n_node, dim=0)
         offset = torch.cat([torch.tensor([0]), noi_node_idx])[:-1]
         noi_node_idx = noi_node_idx - 1
-        meta_feat = torch.cat(feat_lst, dim=0)
+        meta_feat = np.concatenate(feat_lst, axis=0)
         meta_n_nodes = len(meta_feat)
-        if k_shot > 0:
-            meta_feat = torch.cat([meta_feat, self.query_graph_dataset.noi_node_emb.repeat_interleave(len(class_emb), dim=0)], dim=0)
+        # Use original class node embedding for zero-shot tasks, use same prompt embedding for class nodes for few-shot node/link tasks
+        if k_shot > 0 and 'graph' not in self.task_level:
+            meta_feat = np.concatenate([meta_feat, np.repeat(self.query_graph_dataset.noi_node_emb, len(class_emb), axis=0)], axis=0)
         else:
-            meta_feat = torch.cat([meta_feat, class_emb], dim=0)
+            meta_feat = np.concatenate([meta_feat, class_emb], axis=0)
         class_node_indices = torch.arange(meta_n_nodes, meta_n_nodes + n_way)
         spt_class_node_indices = class_node_indices.repeat_interleave(k_shot)
         meta_edge = torch.cat(edge_index, dim=-1) + offset.repeat_interleave(n_edge)
@@ -529,8 +610,8 @@ class FewShotDataset(DatasetWithCollate):
         spt_meta_edge = torch.stack([noi_node_idx[1:], spt_class_node_indices], dim=0)
         meta_edge = torch.cat([meta_edge, qry_meta_edge, spt_meta_edge], dim=-1)
 
-        meta_edge_feat = torch.cat(list(edge_feat) + [self.fs_edge_feats[0].repeat(len(qry_meta_edge[0]), 1),
-                                                      self.fs_edge_feats[1].repeat(len(spt_meta_edge[0]), 1)], dim=0)
+        meta_edge_feat = np.concatenate(list(edge_feat) + [self.fs_edge_feats[0][np.newaxis, :].repeat(len(qry_meta_edge[0]), axis=0),
+                                                      self.fs_edge_feats[1][np.newaxis, :].repeat(len(spt_meta_edge[0]), axis=0)], axis=0)
         meta_e_type = torch.cat(list(e_type) + [torch.zeros(len(qry_meta_edge[0]), dtype=torch.long) + 2,
                                                 torch.zeros(len(spt_meta_edge[0]), dtype=torch.long) + 4])
 
@@ -545,11 +626,14 @@ class FewShotDataset(DatasetWithCollate):
         set_mask(new_subg, "feat_node_mask", offset)
         new_subg.sample_num_nodes = new_subg.num_nodes
         new_subg.num_classes = n_way
-        # print("text", new_subg)
         return new_subg
 
     def get_collate_fn(self):
-        return pyg.loader.dataloader.Collater(None, None)
+        return OFA_collater(self.llm_tokenizer, self.llm_max_length)
+
+    def add_llm_tokenizer(self, tokenizer, llm_max_length):
+        self.llm_tokenizer = tokenizer
+        self.llm_max_length = llm_max_length
 
 
 class MultiDataset(DatasetWithCollate):
@@ -577,7 +661,7 @@ class MultiDataset(DatasetWithCollate):
         if not isinstance(self.dataset_multiple, list):
             self.dataset_multiple = (np.zeros(len(self.sizes), dtype=float) + self.dataset_multiple)
         self.min_ratio = min_ratio
-        if not isinstance(self.min_ratio, list):
+        if isinstance(self.min_ratio, float):
             self.min_ratio = np.zeros(len(self.sizes), dtype=float) + self.min_ratio
         self.mode = mode
         if mode is not None:
@@ -599,9 +683,6 @@ class MultiDataset(DatasetWithCollate):
         dataset_ind = self.ind2dataset[index]
         dataset = self.datas[dataset_ind]
         ret_data = dataset[self.sample_ind[index]]
-        # if self.walk_length is not None:
-        #     ret_data.rwpe = scipy_rwpe(ret_data, self.walk_length)
-        #     print(ret_data.rwpe)
         return ret_data
 
     def get_collate_fn(self):
