@@ -1,9 +1,7 @@
 import os
-import pandas as pd
+
 import torch
 import torch_geometric as pyg
-from data.ofa_data import OFAPygDataset
-from ogb.nodeproppred import PygNodePropPredDataset
 
 
 def get_data(dset):
@@ -28,8 +26,8 @@ def get_data(dset):
         for desc in ordered_desc
     ]
     edge_label_text = [
-        "prompt node. two papers have co-citation",
         "prompt node. two papers do not have co-citation",
+        "prompt node. two papers have co-citation",
     ]
     edge_text = [
         "feature edge. connected papers are cited together by other papers."
@@ -37,9 +35,11 @@ def get_data(dset):
     noi_node_edge_text = [
         "prompt node. link prediction on the papers that are cited together"
     ]
+
     noi_node_text = [
         "prompt node. node classification on the paper's category"
     ]
+
     prompt_edge_text = ["prompt edge."]
     return (
         [new_data],

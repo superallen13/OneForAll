@@ -1,8 +1,7 @@
-import torch_geometric as pyg
 from abc import ABCMeta, abstractmethod
 
+import torch_geometric as pyg
 from torch.utils.data import Dataset
-
 
 
 class DatasetWithCollate(Dataset, metaclass=ABCMeta):

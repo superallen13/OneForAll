@@ -2,11 +2,12 @@
 and produce task specific predictions.
 """
 
+from abc import ABCMeta, abstractmethod
+
+import dgl
 import torch
 import torch.nn as nn
-import dgl
 
-from abc import ABCMeta, abstractmethod
 from gp.nn.pooling import ReprIndexTransform
 
 

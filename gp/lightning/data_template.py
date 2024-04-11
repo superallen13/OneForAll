@@ -1,10 +1,12 @@
 from typing import Union, List, Any, Optional, Dict
+
 from lightning.pytorch import LightningDataModule
-from torch.utils.data import DataLoader, RandomSampler
-from gp.utils.datasets import DatasetWithCollate
+from torch.utils.data import DataLoader, RandomSampler, DistributedSampler
+from torch.utils.data import Dataset
 from torch_geometric.data import Dataset as PygDataset
 from torch_geometric.loader import DataLoader as PygDataloader
-from torch.utils.data import Dataset
+
+from gp.utils.datasets import DatasetWithCollate
 
 
 class DataWithMeta:
@@ -46,33 +48,43 @@ class DataModule(LightningDataModule):
     def __init__(
             self,
             data: Dict[str, DataWithMeta],
+            gpu_size=1,
             num_workers: int = 4,
             pin_memory=True,
     ):
         super().__init__()
         self.datasets = data
+        self.gpu_size = gpu_size
         self.num_workers = num_workers
         self.pin_memory = pin_memory
 
     def create_dataloader(
             self,
             data: Dataset,
-            size: int,
+            sample_size: int,
             batch_size: int,
             drop_last: bool = True,
             shuffle: bool = True,
             num_workers: int = 0,
     ):
+        # Adding distributed sampler for multi-GPU parallel training if number of GPU larger than one.
+        # At this time, sample_size does not have any effect.
         sampler = None
-        if size > 0:
-            sampler = RandomSampler(data, num_samples=size, replacement=True)
-            shuffle = False
+        loader_shuffle = shuffle
+        if self.gpu_size > 1:
+            sampler = DistributedSampler(data, num_replicas=self.gpu_size, shuffle=shuffle)
+            loader_shuffle = False
+        else:
+            if sample_size > 0:
+                sampler = RandomSampler(data, num_samples=sample_size, replacement=True)
+                loader_shuffle = False
+
         if isinstance(data, DatasetWithCollate):
             return DataLoader(
                 data,
                 batch_size,
-                shuffle,
-                sampler,
+                sampler=sampler,
+                shuffle=loader_shuffle,
                 num_workers=num_workers,
                 collate_fn=data.get_collate_fn(),
                 drop_last=drop_last,
@@ -82,9 +94,10 @@ class DataModule(LightningDataModule):
             return PygDataloader(
                 data,
                 batch_size,
-                shuffle,
+                shuffle=loader_shuffle,
                 sampler=sampler,
                 num_workers=num_workers,
+                collate_fn=data.get_collate_fn(),
                 drop_last=drop_last,
                 pin_memory=self.pin_memory,
             )

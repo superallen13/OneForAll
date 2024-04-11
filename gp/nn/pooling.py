@@ -1,10 +1,10 @@
 """Neural Network pooling and Transformaation functions
 """
 
+from abc import ABCMeta, abstractmethod
+
 import torch
 import torch.nn as nn
-
-from abc import ABCMeta, abstractmethod
 from torch_scatter import scatter
 
 from gp.nn.models.util_model import MLP

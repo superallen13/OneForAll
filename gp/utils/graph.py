@@ -29,7 +29,7 @@ def construct_dgl_graph_from_edges(
     return g
 
 
-def sample_fixed_hop_size_neighbor(adj_mat, root, hop, max_nodes_per_hope=500):
+def sample_fixed_hop_size_neighbor(adj_mat: object, root: object, hop: object, max_nodes_per_hop: object = 500) -> object:
     visited = np.array(root)
     fringe = np.array(root)
     nodes = np.array([])
@@ -37,12 +37,13 @@ def sample_fixed_hop_size_neighbor(adj_mat, root, hop, max_nodes_per_hope=500):
         u = adj_mat[fringe].nonzero()[1]
         fringe = np.setdiff1d(u, visited)
         visited = np.union1d(visited, fringe)
-        if len(fringe) > max_nodes_per_hope:
-            fringe = np.random.choice(fringe, max_nodes_per_hope)
+        if len(fringe) > max_nodes_per_hop:
+            fringe = np.random.choice(fringe, max_nodes_per_hop)
         if len(fringe) == 0:
             break
         nodes = np.concatenate([nodes, fringe])
         # dist_list+=[dist+1]*len(fringe)
+    nodes = nodes.astype(int)
     return nodes
 
 

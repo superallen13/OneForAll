@@ -1,8 +1,7 @@
-from gp.nn.models.GNN import MultiLayerMessagePassing
-
-from gp.nn.models.util_model import MLP
 from torch_geometric.nn.conv import GINConv, GINEConv, RGCNConv
-import torch
+
+from gp.nn.models.GNN import MultiLayerMessagePassing
+from gp.nn.models.util_model import MLP
 
 
 class PyGGIN(MultiLayerMessagePassing):

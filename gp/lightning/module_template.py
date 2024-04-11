@@ -1,7 +1,9 @@
-import torch
 import os.path as osp
 from typing import Optional, Union, List
+
+import torch
 from lightning.pytorch import LightningModule
+
 from gp.lightning.metric import EvalKit
 
 
@@ -127,6 +129,7 @@ class BaseTemplate(LightningModule):
                 self.eval_kit.get_metric_name(epoch_name),
                 metric,
                 prog_bar=True,
+                sync_dist=True
             )
             self.eval_kit.eval_reset(epoch_name)
             return metric

@@ -1,7 +1,10 @@
-import os.path as osp
-import torch_geometric as pyg
-import torch
 import json
+import os.path as osp
+
+import numpy as np
+import torch
+import torch_geometric as pyg
+
 from data.ofa_data import OFAPygDataset
 
 
@@ -82,17 +85,20 @@ def read_knowledge_graph(files, name):
     edge_text = ["feature edge. relation between two entities. " + relation for relation in rel_list] + [
         "feature edge. relation between two entities. the inverse relation of " + relation for relation in rel_list]
 
-    prompt_edge_text = ["prompt edge", "prompt edge. edge for query graph that is our target",
-                        "prompt edge. edge for support graph that is an example"]
+    # # different prompt edge feature for source and target node.
+    prompt_edge_text = ["prompt edge.", "prompt edge connected with source node.", "prompt edge connected with target node.",
+                        "prompt edge. edge for query graph that is our prediction target.",
+                        "prompt edge. edge for support graph that is an example."]
+
     prompt_node_text = ["prompt node. relation type prediction between the connected entities.", ]
     label_text = ["prompt node. relation between two entities. " + relation for relation in rel_list]
 
     prompt_text_map = {"e2e_link": {"noi_node_text_feat": ["noi_node_text_feat", [0]],
                                     "class_node_text_feat": ["class_node_text_feat", torch.arange(len(label_text))],
-                                    "prompt_edge_text_feat": ["prompt_edge_text_feat", [0]]},
+                                    "prompt_edge_text_feat": ["prompt_edge_text_feat", [0, 1, 2]]},
                        "lr_link": {"noi_node_text_feat": ["noi_node_text_feat", [0]],
                                    "class_node_text_feat": ["class_node_text_feat", torch.arange(len(label_text))],
-                                   "prompt_edge_text_feat": ["prompt_edge_text_feat", [0, 1, 2]]}}
+                                   "prompt_edge_text_feat": ["prompt_edge_text_feat", [0, 1, 2, 3, 4]]}}
 
     return ([new_data], [node_text, edge_text, label_text, prompt_edge_text, prompt_node_text, ],
             [converted_triplets, rel_list, prompt_text_map],)
@@ -104,6 +110,14 @@ class KGOFADataset(OFAPygDataset):
         names = ["train", "valid", "test"]
         name_dict = {n: osp.join(cur_path, self.name, n + ".txt") for n in names}
         return read_knowledge_graph(name_dict, self.name)
+
+    def add_raw_texts(self, data_list, texts):
+        data_list[0].node_text_feat = np.array(texts[0])
+        data_list[0].edge_text_feat = np.array(texts[1])
+        data_list[0].class_node_text_feat = np.array(texts[2])
+        data_list[0].prompt_edge_text_feat = np.array(texts[3])
+        data_list[0].noi_node_text_feat = np.array(texts[4])
+        return self.collate(data_list)
 
     def add_text_emb(self, data_list, text_emb):
         data_list[0].node_text_feat = text_emb[0]
@@ -121,6 +135,6 @@ class KGOFADataset(OFAPygDataset):
 
     def get_edge_list(self, mode="e2e"):
         if mode == "e2e_link":
-            return {"f2n": [1, 0], "n2f": [3, 0], "n2c": [2, 0], "c2n": [4, 0]}
+            return {"f2n": [1, [1, 2]], "n2f": [3, [1, 2]], "n2c": [2, [0]], "c2n": [4, [0]]}
         elif mode == "lr_link":
-            return {"f2n": [1, 0], "n2f": [3, 0]}
+            return {"f2n": [1, [0]], "n2f": [3, [0]]}

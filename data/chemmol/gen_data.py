@@ -1,14 +1,14 @@
+import json
 import os
+
+import numpy as np
+import pandas as pd
 import torch
 import torch_geometric as pyg
-import numpy as np
-import json
-from data.ofa_data import OFAPygDataset
-
-import pickle
 from datasets import load_dataset
-import pandas as pd
+
 from data.chemmol.gen_raw_graph import smiles2graph
+from data.ofa_data import OFAPygDataset
 from utils import get_label_texts
 
 NAME_TO_SPLIT = {"chemblpre": "chembl_pretraining", "chempcba": "pcba", "chemhiv": "hiv"}
@@ -110,6 +110,15 @@ class MolOFADataset(OFAPygDataset):
         pyg_graph, texts, split = gen_graph(*get_local_text(self.name))
         return [d for d in pyg_graph], texts, split
 
+    def add_raw_texts(self, data_list, texts):
+        data, slices = self.collate(data_list)
+        data.node_embs = np.array(texts[0])
+        data.edge_embs = np.array(texts[1])
+        data.class_node_text_feat = np.array(texts[2])
+        data.prompt_edge_text_feat = np.array(texts[3])
+        data.noi_node_text_feat = np.array(texts[4])
+        return data, slices
+
     def add_text_emb(self, data_list, text_emb):
         """
         Since the majority of node/edge text embeddings are repeated, we only store unique
@@ -125,8 +134,8 @@ class MolOFADataset(OFAPygDataset):
 
     def get(self, index):
         data = super().get(index)
-        node_feat = self.node_embs[data.x]
-        edge_feat = self.edge_embs[data.xe]
+        node_feat = self.node_embs[data.x.numpy()]
+        edge_feat = self.edge_embs[data.xe.numpy()]
         data.node_text_feat = node_feat
         data.edge_text_feat = edge_feat
         data.y = data.y.view(1, -1)
@@ -140,9 +149,11 @@ class MolOFADataset(OFAPygDataset):
 
     def get_edge_list(self, mode="e2e"):
         if mode == "e2e_graph":
-            return {"f2n": [1, 0], "n2f": [3, 0], "n2c": [2, 0]}
+            return {"f2n": [1, [0]], "n2f": [3, [0]], "n2c": [2, [0]]}
+            #return {"f2n": [1, [0]], "n2f": [2, [0]], "n2c": [3, [0]]}
+
         elif mode == "lr_graph":
-            return {"f2n": [1, 0], "n2f": [3, 0]}
+            return {"f2n": [1, [0]], "n2f": [3, [0]]}
 
 
 if __name__ == "__main__":

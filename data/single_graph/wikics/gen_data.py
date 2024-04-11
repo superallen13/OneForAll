@@ -1,14 +1,9 @@
+import functools
 import json
 import os
-import functools
+
 import torch
-from data.ofa_data import OFAPygDataset
 from torch_geometric.datasets import WikiCS
-
-
-# For debug
-#  from data.wikics.gen_data import get_text
-#  a,b = get_text('wikics')
 
 
 def get_text(path):

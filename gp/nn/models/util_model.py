@@ -3,6 +3,7 @@ from typing import Any, Callable, Dict, List, Optional, Union
 import torch
 import torch.nn.functional as F
 from torch import Tensor
+
 from gp.nn.resolver import activation_resolver
 
 

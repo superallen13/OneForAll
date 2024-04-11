@@ -1,7 +1,7 @@
 import os
+
 import pandas as pd
 import torch
-from data.ofa_data import OFAPygDataset
 from ogb.nodeproppred import PygNodePropPredDataset
 
 
@@ -83,11 +83,12 @@ def get_logic_feature(path):
 
 def get_data(dset):
     pyg_data = PygNodePropPredDataset(name="ogbn-arxiv", root=dset.data_dir)
+    pyg_data.data.split = pyg_data.get_idx_split()
     cur_path = os.path.dirname(__file__)
     feat_node_texts = get_node_feature(cur_path).tolist()
     class_node_texts = get_label_feature(cur_path).tolist()
     logic_node_texts = get_logic_feature(cur_path)
-    feat_edge_texts = ["feature edge. citation"]
+    feat_edge_texts = ["feature edge. connected papers are cited together by other papers."]
     noi_node_texts = ["prompt node. node classification of literature category"]
     prompt_edge_texts = ["prompt edge.", "prompt edge. edge for query graph that is our target",
         "prompt edge. edge for support graph that is an example", ]
