@@ -584,10 +584,7 @@ class FewShotDataset(DatasetWithCollate):
                         self.get_noi_graph(self.support_graph_dataset, node_ids[cls_idx, shot_idx], class_emb))
 
         # Randomly select one query node for node/link tasks
-        if self.query_graph_dataset.task_level == 'lr_graph':
-            qry_ind = torch.tensor([[0]])
-        else:
-            qry_ind = torch.randint(n_way, (1, 1))
+        qry_ind = torch.randint(n_way, (1, 1))
         qry_graph = qry_graphs[qry_ind.view(-1)]
         graphs = [qry_graph] + spt_graphs
         feat_lst, edge_index, label, edge_feat, e_type = zip(*graphs)

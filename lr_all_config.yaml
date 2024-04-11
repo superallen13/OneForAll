@@ -7,7 +7,7 @@ JK : "none"
 task_names:
   - "arxiv_fs"
   - "FB15K237_fs"
-  - "chemblpre"
+  - "mol_fs"
 
 d_multiple:
   - 10

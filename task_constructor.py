@@ -147,7 +147,7 @@ def MolFSTrainSplitter(dataset):
     all_classes = dataset.y.view(len(dataset), -1)
     positive_samples = [(cls==1).nonzero(as_tuple=True)[0] for cls in all_classes.T]
     negative_samples = [(cls==0).nonzero(as_tuple=True)[0] for cls in all_classes.T]
-    all_idx2cls = [np.array([i for i in range(2 * len(positive_samples))]), positive_samples + negative_samples]
+    all_idx2cls = [np.array([i for i in range(2 * len(positive_samples))]), negative_samples + positive_samples]
     fs_split['train'] = all_idx2cls
     fs_split['valid'] = all_idx2cls
     fs_split['test'] = all_idx2cls
@@ -302,6 +302,9 @@ def process_reverse_binary_label(embs, label):
     binary_rep[0, label.squeeze().to(torch.long)] = 1
     embs = embs[[1, 0]]
     return label.view(1, -1).to(torch.long), embs, binary_rep
+
+def process_reverse_multi_label(embs, label):
+    return (torch.tensor([[0]]), embs[[1, 0]], label,)
 
 
 def process_multi_label(embs, label):

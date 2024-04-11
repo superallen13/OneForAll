@@ -285,7 +285,7 @@ cora_fs_20:
     k_shot: 5
     base_construct: ConstructNodeCls
     no_class_node: True
-  num_classes: 0
+  num_classes: 2
 
 
 cora_fs_71:
@@ -543,7 +543,7 @@ chemblpre_fs: &chemblpre_fs
   <<: *LR-graph
   dataset_name: chemblpre
   dataset_splitter: MolFSTrainSplitter
-  process_label_func: process_positive_negative_multi_label
+  process_label_func: process_reverse_multi_label
   eval_metric: aucmulti
   eval_func: binary_auc_multi_func
   args:
@@ -551,7 +551,7 @@ chemblpre_fs: &chemblpre_fs
     single_prompt_edge: True
     n_way: 2
     k_shot: 5
-    min_k_shot: 0
+    min_k_shot: 1
     base_construct: ConstructMolCls
     no_class_node: True
   num_classes: 2
@@ -560,7 +560,7 @@ chempcba_fs: &chempcba_fs
   <<: *LR-graph
   dataset_name: chempcba
   dataset_splitter: MolFSTrainSplitter
-  process_label_func: process_positive_negative_multi_label
+  process_label_func: process_reverse_multi_label
   eval_metric: aucmulti
   eval_func: binary_auc_multi_func
   args:
