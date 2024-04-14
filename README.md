@@ -31,6 +31,7 @@ graph/text data that make our work possible.
 - Fix prompt edge connection to align with the paper.
 If you cloned our repo earlier, please first update and reproduce our results.
 
+### Old
 OneForAll underwent a major revision, where we cleaned up the code and fixed several reported bugs. The major updates
 are:
 
