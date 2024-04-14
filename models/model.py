@@ -340,55 +340,6 @@ class LLMModel(torch.nn.Module):
 
 
 
-class BinGraphLLMModel(BinGraphModel):
-    def __init__(self, cache_dir="cache_data/model", peft=True, max_length=500, **kwargs):
-        super().__init__(**kwargs)
-        self.inference_only = not peft
-        self.llm_model = LLMModel(self.llm_name, peft=peft, cache_dir=cache_dir, max_length=max_length)
-
-    def initial_projection(self, g):
-        if self.inference_only:
-            llm_output, _ = self.llm_model.encode(g.text_tokens, pooling=True)
-        else:
-            llm_output = self.llm_model(g.text_tokens)
-        llm_output = self.llm_proj(llm_output)
-        llm_output = llm_output[g.text_mapping]
-        g.x = llm_output[:g.num_nodes]
-        g.edge_attr = llm_output[g.num_nodes:]
-        return g
-
-    def load_and_freeze_gnn(self, model_dir, deepspeed=True):
-        state_dict = load_pretrained_state(model_dir, deepspeed)
-        self.load_state_dict(state_dict, strict=False)
-        self.freeze_gnn_parameters()
-
-
-class BinGraphAttLLMModel(BinGraphAttModel):
-    def __init__(self, cache_dir="cache_data/model", peft=True, max_length=500, **kwargs):
-        super().__init__(**kwargs)
-        self.inference_only = not peft
-        self.llm_model = LLMModel(self.llm_name, peft=peft, cache_dir=cache_dir, max_length=max_length)
-
-    def initial_projection(self, g):
-        if self.inference_only:
-            llm_output, _ = self.llm_model.encode(g.text_tokens, pooling=True)
-        else:
-            llm_output = self.llm_model(g.text_tokens)
-        llm_output = self.llm_proj(llm_output)
-        llm_output = llm_output[g.text_mapping]
-        g.x = llm_output[:g.num_nodes]
-        g.edge_attr = llm_output[g.num_nodes:]
-        return g
-
-    def load_and_freeze_gnn(self, model_dir, deepspeed=True):
-        state_dict = load_pretrained_state(model_dir, deepspeed)
-        def _remove_prefix(key: str, prefix: str) -> str:
-            return key[len(prefix):] if key.startswith(prefix) else key
-        state_dict = {_remove_prefix(k, "model."): state_dict[k] for k in state_dict}
-        self.load_state_dict(state_dict, strict=False)
-        self.freeze_gnn_parameters()
-
-
 class TransformerModel(nn.Module):
     """Transformer encoder model using Pytorch.
     Args:
