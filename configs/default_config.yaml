@@ -18,11 +18,9 @@ rwpe:
 task_names:
   - arxiv
 llm_name: "ST"
-llm_max_length: 350
-llm_peft: True
 llm_b_size: 1
 load_texts: False
 max_nodes_per_hop: 100
 load_best: False
-gnn_load_path: none
-gnn_load_deepspeed: False
+test_rep: 1
+val_interval: 1

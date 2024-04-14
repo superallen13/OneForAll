@@ -22,7 +22,7 @@ from gp.utils.utils import (
     set_random_seed,
 )
 from lightning_model import GraphPredLightning
-from models.model import BinGraphModel, BinGraphAttModel, BinGraphLLMModel, BinGraphAttLLMModel
+from models.model import BinGraphModel, BinGraphAttModel
 from models.model import PyGRGCNEdge
 from task_constructor import UnifiedTaskConstructor
 from utils import (
@@ -44,10 +44,7 @@ def main(params):
     """
     1. Initiate task constructor.
     """
-    if params.load_texts:
-        encoder = None
-    else:
-        encoder = SentenceEncoder(params.llm_name, batch_size=params.llm_b_size)
+    encoder = SentenceEncoder(params.llm_name, batch_size=params.llm_b_size)
 
     task_config_lookup = load_yaml(
         os.path.join(os.path.dirname(__file__), "configs", "task_config.yaml")
@@ -88,21 +85,9 @@ def main(params):
         JK=params.JK,
     )
 
-    if params.load_texts:
-        bin_model = BinGraphAttLLMModel if params.JK == "none" else BinGraphLLMModel
-        model = bin_model(model=gnn, llm_name=params.llm_name, peft=params.llm_peft, max_length=params.llm_max_length,
-                          outdim=out_dim, task_dim=1, add_rwpe=params.rwpe, dropout=params.dropout)
-        # add tokenizer to dataset for tokenizing texts inside collator.
-        tasks.inject_tokenizer(model.llm_model.tokenizer, params.llm_max_length)
-
-    else:
-        bin_model = BinGraphAttModel if params.JK == "none" else BinGraphModel
-        model = bin_model(model=gnn, llm_name=params.llm_name, outdim=out_dim, task_dim=1,
-                          add_rwpe=params.rwpe, dropout=params.dropout)
-
-    # Whether to load pretrained GNN and freeze it.
-    if params.gnn_load_path != "none":
-        model.load_and_freeze_gnn(params.gnn_load_path, params.gnn_load_deepspeed)
+    bin_model = BinGraphAttModel if params.JK == "none" else BinGraphModel
+    model = bin_model(model=gnn, llm_name=params.llm_name, outdim=out_dim, task_dim=1,
+                      add_rwpe=params.rwpe, dropout=params.dropout)
 
     """
     3. Construct datasets and lightning datamodule.
@@ -201,7 +186,6 @@ def main(params):
     )
 
 
-
     strategy = "deepspeed_stage_2" if gpu_size > 1 else "auto"
     val_res, test_res = lightning_fit(
         wandb_logger,
@@ -238,13 +222,7 @@ if __name__ == "__main__":
             )
         )
     )
-    configs.append(
-        load_yaml(
-            os.path.join(
-                os.path.dirname(__file__), "configs", "eval_config.yaml"
-            )
-        )
-    )
+
     if params.override is not None:
         override_config = load_yaml(params.override)
         configs.append(override_config)
@@ -260,11 +238,7 @@ if __name__ == "__main__":
     torch.set_float32_matmul_precision("high")
     params.log_project = "full_cdm"
 
-    if params.load_texts:
-        params.exp_name += f"_{params.llm_name}_ofa2"
-    else:
-        params.exp_name += f"_{params.llm_name}_ofa1"
-
+    params.exp_name += f"_{params.llm_name}_ofa1"
 
     print(params)
     main(params)
