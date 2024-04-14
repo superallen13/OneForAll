@@ -24,6 +24,12 @@ and [villmow](https://github.com/villmow/datasets_knowledge_embedding/tree/maste
 graph/text data that make our work possible.
 
 ## 🔥News
+### Update 04/14
+- Multi-GPU training is employed, it uses all visible GPU to train the model.
+- Fixed bug in [#11](https://github.com/LechengKong/OneForAll/issues/11), few-shot should be correct.
+- Update ArXiv split. So baseline and OFA both use the same split.
+- Fix prompt edge connection to align with the paper.
+If you cloned our repo earlier, please first update and reproduce our results.
 
 OneForAll underwent a major revision, where we cleaned up the code and fixed several reported bugs. The major updates
 are:
