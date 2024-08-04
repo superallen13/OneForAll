@@ -268,7 +268,8 @@ class LLMModel(torch.nn.Module):
 
     def get_llm_model(self):
         if self.llm_name == "llama2_7b":
-            model_name = "meta-llama/Llama-2-7b-hf"
+            # model_name = "meta-llama/Llama-2-7b-hf"
+            model_name = "TinyPixel/Llama-2-7B-bf16-sharded"
             ModelClass = LlamaForCausalLM
             TokenizerClass = LlamaTokenizer
 

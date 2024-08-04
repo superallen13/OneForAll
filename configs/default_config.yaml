@@ -17,7 +17,7 @@ eval_sample_size: -1
 rwpe:
 task_names:
   - arxiv
-llm_name: "ST"
+llm_name: "llama2_7b"
 llm_b_size: 1
 load_texts: False
 max_nodes_per_hop: 100
